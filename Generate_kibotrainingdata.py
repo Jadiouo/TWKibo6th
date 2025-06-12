@@ -184,7 +184,7 @@ if __name__ == "__main__":
             # Save the image
             img_save_path = os.path.join(Store_image_folder, f"{fname_title}.png")
             # Resize image to output_img_size
-            # img = cv2.resize(img, output_img_size, interpolation=cv2.INTER_NEAREST)
+            img = cv2.resize(img, output_img_size, interpolation=cv2.INTER_NEAREST)
             cv2.imwrite(img_save_path, img)
 
             # Save the label

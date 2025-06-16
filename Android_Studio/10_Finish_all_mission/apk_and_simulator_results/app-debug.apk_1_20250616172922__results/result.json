@@ -1,0 +1,57 @@
+{
+    "Mission Time": {
+        "start": "19700101 000224512",
+        "finish": "19700101 000410152"
+    },
+    "RoundingReport": {
+        "timestamp": "19700101 000350424",
+        "arrival": {
+            "try": true,
+            "success": true,
+            "distance": 0.0030312724873996755
+        },
+        "areaMapping": {
+            "areas": [
+                {
+                    "areaId": 1,
+                    "level": 4,
+                    "correct": true,
+                    "lost_item": "fossil",
+                    "num": 3
+                },
+                {
+                    "areaId": 2,
+                    "level": 4,
+                    "correct": true,
+                    "lost_item": "key",
+                    "num": 2
+                },
+                {
+                    "areaId": 3,
+                    "level": 4,
+                    "correct": true,
+                    "lost_item": "compass",
+                    "num": 6
+                },
+                {
+                    "areaId": 4,
+                    "level": 4,
+                    "correct": true,
+                    "lost_item": "coin",
+                    "num": 2
+                }
+            ]
+        }
+    },
+    "FoundReport": {
+        "timestamp": "19700101 000410152",
+        "cameraAngle": 19.957011032248417,
+        "distance": 0.8040063269458457,
+        "try": true,
+        "isInArea": true,
+        "success": true
+    },
+    "Illegal": false,
+    "TimeBonusN": 1015,
+    "OasisZoneN": 0.009574108595470223
+}

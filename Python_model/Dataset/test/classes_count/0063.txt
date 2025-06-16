@@ -1,0 +1,3 @@
+shell 1
+compass 1
+diamond 1

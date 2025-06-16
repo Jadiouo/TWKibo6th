@@ -1,0 +1,2 @@
+treasure_box 2
+emerald 1

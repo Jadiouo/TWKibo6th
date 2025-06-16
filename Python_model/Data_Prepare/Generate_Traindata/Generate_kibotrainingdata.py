@@ -171,8 +171,8 @@ if __name__ == "__main__":
 
     # Create the dataset
     Kibo_datasets = KiboDataset(datainfo, transforminfo)
-    current_count = 1
-    for _ in range(5):  # Generate 30 batches of data
+    current_count = 2
+    for _ in range(10):  # Generate 30 batches of data
         # Generate the dataset
         Kibo_datasets.initialize_batchdata()
         for count, data in enumerate(Kibo_datasets):

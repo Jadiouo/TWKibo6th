@@ -1,0 +1,2 @@
+letter 1
+diamond 1

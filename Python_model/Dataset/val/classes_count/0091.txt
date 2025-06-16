@@ -1,0 +1,3 @@
+compass 1
+crystal 1
+coin 1

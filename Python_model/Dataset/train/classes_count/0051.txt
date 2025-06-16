@@ -1,0 +1,2 @@
+compass 3
+emerald 1

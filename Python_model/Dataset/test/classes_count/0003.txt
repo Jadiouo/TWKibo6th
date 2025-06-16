@@ -1,0 +1,3 @@
+coral 1
+fossil 1
+diamond 1

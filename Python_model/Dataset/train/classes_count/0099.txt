@@ -1,0 +1,3 @@
+crystal 1
+treasure_box 1
+coin 1

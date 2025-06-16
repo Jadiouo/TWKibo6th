@@ -1,0 +1,2 @@
+compass 4
+diamond 1

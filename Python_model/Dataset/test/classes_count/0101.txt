@@ -1,0 +1,3 @@
+crystal 1
+letter 1
+coin 1

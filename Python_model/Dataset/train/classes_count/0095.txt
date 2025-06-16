@@ -1,0 +1,2 @@
+treasure_box 7
+crystal 1

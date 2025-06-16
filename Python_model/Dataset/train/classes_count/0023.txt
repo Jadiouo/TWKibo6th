@@ -1,0 +1,2 @@
+diamond 1
+coral 2

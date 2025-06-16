@@ -1,0 +1,8 @@
+Optimizer stripped from runs\kibo320\krpc_aug_yolov8n_32b_cos_lr_with03_copy_paste_no_mixup\weights\last.pt, 6.2MB
+ 202          1      0.992      0.995      0.972
+                   key         94        249      0.996      0.971      0.994      0.915
+                letter         88        247          1      0.976      0.994      0.957
+                 shell         76        260      0.999      0.996      0.995      0.961
+          treasure_box         70        199      0.998       0.99      0.992      0.956
+Speed: 0.0ms preprocess, 0.4ms inference, 0.0ms loss, 1.1ms postprocess per image
+Results saved to runs\kibo320\krpc_aug_yolov8n_32b_cos_lr_with03_copy_paste_no_mixup

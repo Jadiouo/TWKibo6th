@@ -1,0 +1,20 @@
+
+400 epochs completed in 2.727 hours.
+Optimizer stripped from runs\kibo320\krpc_aug_yolov8n_32b_cos_lr_400_with03_copy_paste_mixup\weights\last.pt, 6.3MB
+ 202          1      0.992      0.995       0.97
+                   key         94        249      0.992      0.972      0.995      0.914
+                letter         88        247          1      0.991      0.995      0.958
+                 shell         76        260      0.999      0.996      0.995      0.969
+ 202          1      0.992      0.995       0.97
+                   key         94        249      0.992      0.972      0.995      0.914
+ 202          1      0.992      0.995       0.97
+ 202          1      0.992      0.995       0.97
+                   key         94        249      0.992      0.972      0.995      0.914
+ 202          1      0.992      0.995       0.97
+ 202          1      0.992      0.995       0.97
+                   key         94        249      0.992      0.972      0.995      0.914
+                letter         88        247          1      0.991      0.995      0.958
+                 shell         76        260      0.999      0.996      0.995      0.969
+          treasure_box         70        199          1      0.987      0.993      0.951
+Speed: 0.0ms preprocess, 0.4ms inference, 0.0ms loss, 1.2ms postprocess per image
+Results saved to runs\kibo320\krpc_aug_yolov8n_32b_cos_lr_400_with03_copy_paste_mixup

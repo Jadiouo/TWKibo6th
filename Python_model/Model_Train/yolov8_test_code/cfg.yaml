@@ -1,0 +1,57 @@
+# Custom YOLOv8 Hyperparameters Configuration
+# Save this as custom_hyp.yaml
+
+# Training Settings
+epochs: 200
+batch: 32
+imgsz: 320
+device: 0
+cache: 'disk'  # 'disk' or 'ram'
+# workers: 8
+project: 'runs/kibo320'
+name: 'krpc_aug_yolov8n_32b_cos_lr_400_with03_copy_paste_mixup'
+# patience: 100
+# save: true
+# amp: true
+# plots: true
+# val: true
+
+# # Hyperparameters
+# optimizer: 'Adam'       # optimizer: SGD, Adam, AdamW, RMSProp
+cos_lr: True          # use cosine learning rate scheduler
+# lr0: 0.01              # initial learning rate (SGD=1E-2, Adam=1E-3)
+# lrf: 0.01              # final OneCycleLR learning rate (lr0 * lrf)
+# momentum: 0.937        # SGD momentum/Adam beta1
+# weight_decay: 0.0005   # optimizer weight decay
+# warmup_epochs: 3.0     # warmup epochs (fractions ok)
+# warmup_momentum: 0.8   # warmup initial momentum
+# warmup_bias_lr: 0.1    # warmup initial bias lr
+
+# # Loss Function Weights
+box: 10               # box loss gain
+cls: 2              # cls loss gain (scale with pixels)
+dfl: 3                # dfl loss gain
+# fl_gamma: 0.0          # focal loss gamma
+# label_smoothing: 0.0   # label smoothing
+
+# Data Augmentation
+hsv_h: 0.015           # image HSV-Hue augmentation (fraction)
+hsv_s: 0.7             # image HSV-Saturation augmentation (fraction)
+hsv_v: 0.4             # image HSV-Value augmentation (fraction)
+degrees: 90.0          # image rotation (+/- deg)
+translate: 0.1         # image translation (+/- fraction)
+scale: 0.5             # image scale (+/- gain)
+# shear: 0.0             # image shear (+/- deg)
+# perspective: 0.1       # image perspective (+/- fraction)
+flipud: 0.5            # image flip up-down (probability)
+fliplr: 0.5            # image flip left-right (probability)
+mosaic: 0.75           # image mosaic (probability)
+mixup: 0.3          # image mixup (probability)
+copy_paste: 0.3        # segment copy-paste (probability)
+
+
+# Validation Settings
+iou: 0.7
+max_det: 50
+# half: false
+# dnn: false

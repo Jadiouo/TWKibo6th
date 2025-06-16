@@ -1,0 +1,114 @@
+# Custom YOLOv8 Hyperparameters Configuration
+# Save this as cfg.yaml
+
+# Basic Training Settings
+epochs: 200
+batch: 32
+imgsz: 320
+cache: true
+workers: 8
+patience: 100
+save: true
+amp: true
+plots: true
+val: true
+profile: false              # Performance profiling
+save_period: -1             # Checkpoint saving frequency (-1 = only save last and best)
+time: null                  # Training time limit
+freeze: null                # Layer freezing (e.g., [0, 1, 2] to freeze first 3 layers)
+
+# Optimizer Settings
+optimizer: 'SGD'           # auto -> SGD (since you had 'auto')
+cos_lr: false
+lr0: 0.01
+lrf: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 3.0
+warmup_momentum: 0.8
+warmup_bias_lr: 0.1
+
+# Loss Function Weights
+box: 10
+cls: 1.5
+dfl: 3
+pose: 12.0
+kobj: 1.0
+nbs: 64
+
+# Data Augmentation
+hsv_h: 0.015
+hsv_s: 0.7
+hsv_v: 0.4
+degrees: 90.0
+translate: 0.1
+scale: 0.5
+shear: 0.0
+perspective: 0.0
+flipud: 0.5
+fliplr: 0.5
+bgr: 0.0
+mosaic: 0.75
+mixup: 0
+cutmix: 0.0
+copy_paste: 0
+copy_paste_mode: flip
+auto_augment: randaugment
+erasing: 0.4
+
+# Advanced Training Options
+close_mosaic: 10
+single_cls: false
+rect: false
+deterministic: true
+seed: 0
+overlap_mask: true
+mask_ratio: 4
+dropout: 0.0
+multi_scale: false
+fraction: 1.0
+
+# Validation Settings - Optimized for Crowded People
+split: val                  # Validation split name
+iou: 0.5                    # Lower IoU = remove more duplicate people detections
+max_det: 150                # Higher limit for crowded scenes (default: 300)
+half: false                 # Keep full precision for best accuracy
+dnn: false                  # Use default PyTorch backend
+save_json: false            # Save results to JSON file
+conf: null                  # Confidence threshold (null = use defaults)
+
+# Prediction/Inference Settings
+source: null                # Prediction source
+vid_stride: 1               # Video frame-rate stride
+stream_buffer: false        # Streaming options
+visualize: false            # Debug visualization
+augment: false              # Test-time augmentation
+agnostic_nms: false         # NMS configuration
+classes: null               # Class filtering
+retina_masks: false         # Segmentation options
+embed: null                 # Embedding options
+
+# Display/Output Settings
+show: false                 # Display options
+save_frames: false          # Output options
+save_txt: false             # Text output
+save_conf: false            # Confidence saving
+save_crop: false            # Crop saving
+show_labels: true           # Display settings
+show_conf: true             # Display settings
+show_boxes: true            # Display settings
+line_width: null            # Visualization
+
+# Export Settings (can also be here)
+format: torchscript         # Export format
+keras: false                # Export options
+optimize: false             # Export optimization
+int8: false                 # Quantization
+dynamic: false              # Dynamic shapes
+simplify: true              # Model simplification
+opset: null                 # ONNX version
+workspace: null             # TensorRT workspace
+nms: false                  # Export NMS
+
+# Tracking Settings
+tracker: botsort.yaml       # Tracking config

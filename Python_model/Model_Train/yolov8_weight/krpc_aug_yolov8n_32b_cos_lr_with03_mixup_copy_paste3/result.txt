@@ -1,0 +1,16 @@
+Ultralytics 8.3.153  Python-3.9.23 torch-2.5.0 CUDA:1 (NVIDIA GeForce RTX 3060, 12287MiB)
+Model summary (fused): 72 layers, 3,007,793 parameters, 0 gradients, 8.1 GFLOPs
+                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100%|██████████| 8/8 [00:02<00:00,  3.42it/s]
+                   all        500       1940      0.997      0.992      0.995      0.954
+                  coin         70        240          1      0.995      0.995      0.976
+               compass         57        139      0.999          1      0.995      0.975
+                 coral         83        217          1      0.992      0.995      0.933
+               crystal         65         65      0.993          1      0.995      0.943
+               diamond         59         59      0.992          1      0.995      0.977
+               emerald         63         63      0.993          1      0.995       0.97
+                fossil         68        202          1      0.995      0.995       0.96
+                   key         94        249      0.997       0.98      0.995      0.903
+                letter         88        247      0.995       0.98      0.995      0.947
+                 shell         76        260      0.996      0.996      0.995      0.958
+          treasure_box         70        199      0.999       0.98      0.993      0.949
+Speed: 0.2ms preprocess, 0.6ms inference, 0.0ms loss, 1.2ms postprocess per image

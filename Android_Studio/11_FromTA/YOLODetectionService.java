@@ -1,941 +1,671 @@
 package jp.jaxa.iss.kibo.rpc.sampleapk;
 
-import jp.jaxa.iss.kibo.rpc.api.KiboRpcService;
-
-import gov.nasa.arc.astrobee.types.Point;
-import gov.nasa.arc.astrobee.types.Quaternion;
-
+import ai.onnxruntime.*;
+import android.content.Context;
 import android.util.Log;
-
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.Set;
-import java.util.HashSet;
-
-// OpenCV imports
-import org.opencv.aruco.Dictionary;
-import org.opencv.aruco.Aruco;
 import org.opencv.core.*;
 import org.opencv.imgproc.Imgproc;
-import org.opencv.calib3d.Calib3d;
-import org.opencv.imgproc.CLAHE;
 
-public class YourService extends KiboRpcService {
+import java.io.*;
+import java.nio.FloatBuffer;
+import java.util.*;
 
-    private final String TAG = this.getClass().getSimpleName();
+/**
+ * 增强型YOLO对象检测服务，具有智能非极大值抑制功能
+ * 匹配Python的yoloraw_postprocessing.py功能
+ */
+public class YOLODetectionService {
+    private static final String TAG = "YOLODetectionService";
+    private static final String MODEL_NAME = "yolo_v8n_400.onnx";
+    private static final int INPUT_SIZE = 320;
+    private static final float DEFAULT_CONF_THRESHOLD = 0.3f;
+    private static final float DEFAULT_STANDARD_NMS_THRESHOLD = 0.45f;
+    private static final float DEFAULT_OVERLAP_NMS_THRESHOLD = 0.8f;
 
-    // Instance variables to store detection results across areas
-    private Set<String> foundTreasures = new HashSet<>();
-    private Set<String> foundLandmarks = new HashSet<>();  // Add this line
-    private Map<String, Map<String, Integer>> areaLandmarks = new HashMap<>();
-
-
-    // Area coordinates and orientations for all 4 areas 
-    private final Point[] AREA_POINTS = {
-            new Point(10.95d, -9.78d, 5.195d),         // Area 1
-            new Point(10.925d, -8.875d, 4.56203d),     // Area 2 
-            new Point(10.925d, -7.925d, 4.56093d),     // Area 3
-            new Point(10.666984d, -6.8525d, 4.945d)    // Area 4
+    // 与Python代码匹配的类定义
+    private static final String[] CLASS_NAMES = {
+            "coin", "compass", "coral", "crystal", "diamond", "emerald",
+            "fossil", "key", "letter", "shell", "treasure_box"
     };
 
-    private final Quaternion[] AREA_QUATERNIONS = {
-            new Quaternion(0f, 0f, -0.707f, 0.707f), // Area 1
-            new Quaternion(0f, 0.707f, 0f, 0.707f),  // Area 2
-            new Quaternion(0f, 0.707f, 0f, 0.707f),  // Area 3
-            new Quaternion(0f, 0f, 1f, 0f)           // Area 4
-    };
+    private static final Set<Integer> TREASURE_IDS = new HashSet<>(Arrays.asList(3, 4, 5)); // 水晶，钻石，翡翠
+    private static final Set<Integer> LANDMARK_IDS = new HashSet<>(Arrays.asList(0, 1, 2, 6, 7, 8, 9, 10)); // 硬币，指南针，珊瑚，化石，钥匙，信件，贝壳，宝箱
 
-    @Override
-    protected void runPlan1(){
-        // Log the start of the mission.
-        Log.i(TAG, "Start mission");
+    private OrtEnvironment env;
+    private OrtSession session;
+    private Context context;
+    private boolean isInitialized = false;
 
-        // The mission starts.
-        api.startMission();
-
-        // Initialize area treasure tracking
-        Map<Integer, Set<String>> areaTreasure = new HashMap<>();
-        for (int i = 1; i <= 4; i++) {
-            areaTreasure.put(i, new HashSet<String>());
-        }
-
-        // ========================================================================
-        // CONFIGURABLE IMAGE PROCESSING PARAMETERS - EDIT HERE
-        // ========================================================================
-
-        Size cropWarpSize = new Size(640, 480);   // Size for cropped/warped image
-        Size resizeSize = new Size(320, 320);     // Size for final processing
-
-        // ========================================================================
-        // PROCESS ALL 4 AREAS
-        // ========================================================================
-
-        // Loop through all 4 areas
-        for (int areaIndex = 0; areaIndex < 4; areaIndex++) {
-            int areaId = areaIndex + 1; // Area IDs are 1, 2, 3, 4
-
-            Log.i(TAG, "=== Processing Area " + areaId + " ===");
-
-            // Move to the area
-            Point targetPoint = AREA_POINTS[areaIndex];
-            Quaternion targetQuaternion = AREA_QUATERNIONS[areaIndex];
-
-            Log.i(TAG, String.format("Moving to Area %d: Point(%.3f, %.3f, %.3f)",
-                    areaId, targetPoint.getX(), targetPoint.getY(), targetPoint.getZ()));
-
-            api.moveTo(targetPoint, targetQuaternion, false);
-
-            // Get a camera image
-            Mat image = api.getMatNavCam();
-
-            // Process the image for this area
-            Mat claHeBinImage = imageEnhanceAndCrop(image, cropWarpSize, resizeSize, areaId);
-
-            // Initialize detection results for this area
-            Map<String, Integer> landmark_items = new HashMap<>();
-            Set<String> treasure_types = new HashSet<>();
-
-            if (claHeBinImage != null) {
-                Log.i(TAG, "Area " + areaId + ": Image enhancement and cropping successful");
-
-                // Detect items using YOLO
-                Object[] detected_items = detectitemfromcvimg(
-                        claHeBinImage,
-                        0.5f,      // conf_threshold
-                        "lost",    // img_type ("lost" or "target")
-                        0.45f,     // standard_nms_threshold
-                        0.8f,      // overlap_nms_threshold
-                        320        // img_size
-                );
-
-                // Extract results
-                landmark_items = (Map<String, Integer>) detected_items[0];
-                treasure_types = (Set<String>) detected_items[1];
-
-                Log.i(TAG, "Area " + areaId + " - Landmark quantities: " + landmark_items);
-                Log.i(TAG, "Area " + areaId + " - Treasure types: " + treasure_types);
-
-                // Store results for later use
-                areaLandmarks.put("area" + areaId, landmark_items);
-                foundTreasures.addAll(treasure_types);
-
-                // Add this line to store landmark types
-                foundLandmarks.addAll(landmark_items.keySet());
-
-                // Store treasure types for this area
-                areaTreasure.get(areaId).addAll(treasure_types);
-
-                Log.i(TAG, "Area " + areaId + " treasure types: " + areaTreasure.get(areaId));
-
-                // Clean up the processed image
-                claHeBinImage.release();
-            } else {
-                Log.w(TAG, "Area " + areaId + ": Image enhancement failed - no markers detected or processing error");
-            }
-
-            // Clean up original image
-            image.release();
-
-            // ========================================================================
-            // SET AREA INFO FOR THIS AREA
-            // ========================================================================
-
-            // Use the detected landmark items for area info
-            String[] firstLandmark = getFirstLandmarkItem(landmark_items);
-            if (firstLandmark != null) {
-                String currentlandmark_items = firstLandmark[0];
-                int landmarkCount = Integer.parseInt(firstLandmark[1]);
-
-                // Set the area info with detected landmarks
-                api.setAreaInfo(areaId, currentlandmark_items, landmarkCount);
-                Log.i(TAG, String.format("Area %d: %s x %d", areaId, currentlandmark_items, landmarkCount));
-            } else {
-                Log.w(TAG, "Area " + areaId + ": No landmark items detected");
-                // Set default if no detection
-                api.setAreaInfo(areaId, "unknown", 0);
-            }
-
-            // Short delay between areas to ensure stability
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                Log.w(TAG, "Sleep interrupted");
-            }
-        }
-
-        // ========================================================================
-        // LOG SUMMARY OF ALL AREAS
-        // ========================================================================
-
-        Log.i(TAG, "=== AREA PROCESSING SUMMARY ===");
-        for (int i = 1; i <= 4; i++) {
-            Log.i(TAG, "Area " + i + " treasures: " + areaTreasure.get(i));
-            Log.i(TAG, "Area " + i + " landmarks: " + areaLandmarks.get("area" + i));
-        }
-        Log.i(TAG, "All found treasures: " + foundTreasures);
-        Log.i(TAG, "All found landmarks: " + foundLandmarks);  // Add this line
-
-        // ========================================================================
-        // ASTRONAUT INTERACTION
-        // ========================================================================
-
-        // Move to the front of the astronaut and report rounding completion
-        Point astronautPoint = new Point(11.143d, -6.7607d, 4.9654d);
-        Quaternion astronautQuaternion = new Quaternion(0f, 0f, 0.707f, 0.707f);
-
-        Log.i(TAG, "Moving to astronaut position");
-        api.moveTo(astronautPoint, astronautQuaternion, false);
-        api.reportRoundingCompletion();
-
-        // Error handling verify markers are visible before proceeding
-        boolean astronautMarkersOk = waitForMarkersDetection(2000, 200, "astronaut");
-
-        if (astronautMarkersOk) {
-            Log.i(TAG, "Astronaut markers confirmed - proceeding with target detection");
-        } else {
-            Log.w(TAG, "Astronaut markers not detected - proceeding anyway");
-        }
-
-        // ========================================================================
-        // TARGET ITEM RECOGNITION
-        // ========================================================================
-
-        // Get target item image from astronaut
-        Mat targetImage = api.getMatNavCam();
-
-        // Process target image to identify what the astronaut is holding
-        String targetTreasureType = processTargetImage(targetImage, resizeSize);
-
-        if (targetTreasureType != null && !targetTreasureType.equals("unknown")) {
-            Log.i(TAG, "Target treasure identified: " + targetTreasureType);
-
-            // Find which area contains this treasure
-            int targetAreaId = findTreasureInArea(targetTreasureType, areaTreasure);
-
-            if (targetAreaId > 0) {
-                Log.i(TAG, "Target treasure '" + targetTreasureType + "' found in Area " + targetAreaId);
-
-                // Notify recognition
-                api.notifyRecognitionItem();
-
-                // Move back to the target area
-                Point targetAreaPoint = AREA_POINTS[targetAreaId - 1];
-                Quaternion targetAreaQuaternion = AREA_QUATERNIONS[targetAreaId - 1];
-
-                Log.i(TAG, "Moving back to Area " + targetAreaId + " to get the treasure");
-                api.moveTo(targetAreaPoint, targetAreaQuaternion, false);
-
-                // Take a snapshot of the target item
-                api.takeTargetItemSnapshot();
-
-                Log.i(TAG, "Mission completed successfully!");
-            } else {
-                Log.w(TAG, "Target treasure '" + targetTreasureType + "' not found in any area");
-                api.notifyRecognitionItem();
-                api.takeTargetItemSnapshot();
-            }
-        } else {
-            Log.w(TAG, "Could not identify target treasure from astronaut");
-            api.notifyRecognitionItem();
-            api.takeTargetItemSnapshot();
-        }
-
-        // Clean up target image
-        targetImage.release();
+    public YOLODetectionService(Context context) {
+        this.context = context;
+        initializeModel();
     }
 
-    @Override
-    protected void runPlan2(){
-        // write your plan 2 here.
-    }
-
-    @Override
-    protected void runPlan3(){
-        // write your plan 3 here.
-    }
-
-    /**
-     * Process target image to identify the treasure type the astronaut is holding
-     * @param targetImage Image from astronaut
-     * @param resizeSize Processing size
-     * @return Treasure type name or "unknown"
-     */
-    private String processTargetImage(Mat targetImage, Size resizeSize) {
+    private void initializeModel() {
         try {
-            Log.i(TAG, "Processing target image from astronaut");
+            Log.i(TAG, "正在初始化YOLO模型...");
 
-            // Save the target image for debugging
-            api.saveMatImage(targetImage, "target_astronaut_raw.png");
+            env = OrtEnvironment.getEnvironment();
+            File modelFile = copyAssetToFile(MODEL_NAME);
 
-            // Use the SAME processing pipeline as areas (ArUco detection + cropping + enhancement)
-            Size cropWarpSize = new Size(640, 480);   // Same as area processing
-            Mat processedTarget = imageEnhanceAndCrop(targetImage, cropWarpSize, resizeSize, 0); // Use 0 for target
+            OrtSession.SessionOptions sessionOptions = new OrtSession.SessionOptions();
+            sessionOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT);
 
-            if (processedTarget != null) {
-                Log.i(TAG, "Target image processing successful - markers detected and cropped");
-
-                // Detect items using YOLO with "target" type - SAME as area processing
-                Object[] detected_items = detectitemfromcvimg(
-                        processedTarget,
-                        0.3f,      // Lower confidence for target detection
-                        "target",  // img_type for target
-                        0.45f,     // standard_nms_threshold
-                        0.8f,      // overlap_nms_threshold
-                        320        // img_size
-                );
-
-                // Extract results - SAME as area processing
-                Map<String, Integer> landmark_items = (Map<String, Integer>) detected_items[0];
-                Set<String> treasure_types = (Set<String>) detected_items[1];
-
-                Log.i(TAG, "Target - Landmark quantities: " + landmark_items);
-                Log.i(TAG, "Target - Treasure types: " + treasure_types);
-
-                if (!treasure_types.isEmpty()) {
-                    String targetTreasure = treasure_types.iterator().next();
-                    Log.i(TAG, "Target treasure detected: " + targetTreasure);
-                    processedTarget.release();
-                    return targetTreasure;
-                }
-
-                processedTarget.release();
-            } else {
-                Log.w(TAG, "Target image processing failed - no markers detected or processing error");
-            }
-
-            Log.w(TAG, "No treasure detected in target image");
-            return "unknown";
+            session = env.createSession(modelFile.getAbsolutePath(), sessionOptions);
+            isInitialized = true;
+            Log.i(TAG, "YOLO模型初始化成功");
 
         } catch (Exception e) {
-            Log.e(TAG, "Error processing target image: " + e.getMessage());
-            return "unknown";
+            Log.e(TAG, "初始化YOLO模型失败: " + e.getMessage(), e);
+            isInitialized = false;
         }
     }
 
+    private File copyAssetToFile(String assetName) throws IOException {
+        InputStream inputStream = context.getAssets().open(assetName);
+        File outputFile = new File(context.getFilesDir(), assetName);
+
+        FileOutputStream outputStream = new FileOutputStream(outputFile);
+        byte[] buffer = new byte[4096];
+        int length;
+        while ((length = inputStream.read(buffer)) > 0) {
+            outputStream.write(buffer, 0, length);
+        }
+
+        outputStream.close();
+        inputStream.close();
+
+        return outputFile;
+    }
+
     /**
-     * Basic enhancement for target image (simpler than area processing)
+     * 主检测方法，匹配Python的simple_detection_example功能
+     * @param image OpenCV Mat图像
+     * @param imageType "lost"或"target"
+     * @param confThreshold 置信度阈值（默认：0.3）
+     * @param standardNmsThreshold 标准NMS阈值（默认：0.45）
+     * @param overlapNmsThreshold 智能NMS的重叠阈值（默认：0.8）
+     * @return 包含宝藏和地标数量的增强检测结果
      */
-    private Mat enhanceTargetImage(Mat image, Size resizeSize) {
+    public EnhancedDetectionResult DetectfromcvImage(Mat image, String imageType,
+                                                     float confThreshold,
+                                                     float standardNmsThreshold,
+                                                     float overlapNmsThreshold) {
+        if (!isInitialized) {
+            Log.e(TAG, "YOLO模型未初始化");
+            return new EnhancedDetectionResult();
+        }
+
         try {
-            // Resize to processing size
-            Mat resized = new Mat();
-            Imgproc.resize(image, resized, resizeSize);
+            Log.i(TAG, "开始对图像类型进行检测: " + imageType);
 
-            // Apply basic CLAHE enhancement
-            Mat enhanced = new Mat();
-            CLAHE clahe = Imgproc.createCLAHE();
-            clahe.setClipLimit(2.0);
-            clahe.setTilesGridSize(new Size(8, 8));
-            clahe.apply(resized, enhanced);
+            // 预处理图像
+            Mat preprocessedImage = preprocessImage(image);
+            float[][][][] inputData = matToFloatArray(preprocessedImage);
 
-            // Save enhanced target for debugging
-            api.saveMatImage(enhanced, "target_astronaut_enhanced.png");
+            // 运行推理获取原始张量
+            Map<String, OnnxTensor> inputMap = new HashMap<>();
+            OnnxTensor inputTensor = OnnxTensor.createTensor(env, inputData);
+            inputMap.put("images", inputTensor);
 
-            resized.release();
-            return enhanced;
+            OrtSession.Result result = session.run(inputMap);
+            OnnxTensor outputTensor = (OnnxTensor) result.get(0);
+            float[][][] rawOutput = (float[][][]) outputTensor.getValue();
 
-        } catch (Exception e) {
-            Log.e(TAG, "Error enhancing target image: " + e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * Find which area contains the specified treasure type
-     * @param treasureType The treasure type to find
-     * @param areaTreasure Map of area treasures
-     * @return Area ID (1-4) or 0 if not found
-     */
-    private int findTreasureInArea(String treasureType, Map<Integer, Set<String>> areaTreasure) {
-        for (int areaId = 1; areaId <= 4; areaId++) {
-            Set<String> treasures = areaTreasure.get(areaId);
-            if (treasures != null && treasures.contains(treasureType)) {
-                return areaId;
-            }
-        }
-        return 0; // Not found
-    }
-
-    /**
-     * Method to detect items from CV image using YOLO - matches Python testcallyololib.py functionality
-     * @param image Input OpenCV Mat image
-     * @param conf Confidence threshold (e.g., 0.3f)
-     * @param imgtype Image type: "lost" or "target"
-     * @param standard_nms_threshold Standard NMS threshold (e.g., 0.45f)
-     * @param overlap_nms_threshold Overlap NMS threshold for intelligent NMS (e.g., 0.8f)
-     * @param img_size Image size for processing (e.g., 320)
-     * @return Object array: [landmark_quantities (Map<String, Integer>), treasure_types (Set<String>)]
-     */
-    private Object[] detectitemfromcvimg(Mat image, float conf, String imgtype,
-                                         float standard_nms_threshold, float overlap_nms_threshold, int img_size) {
-        YOLODetectionService yoloService = null;
-        try {
-            Log.i(TAG, String.format("Starting YOLO detection - type: %s, conf: %.2f", imgtype, conf));
-
-            // Initialize YOLO detection service
-            yoloService = new YOLODetectionService(this);
-
-            // Call detection with all parameters (matches Python simple_detection_example)
-            YOLODetectionService.EnhancedDetectionResult result = yoloService.DetectfromcvImage(
-                    image, imgtype, conf, standard_nms_threshold, overlap_nms_threshold
+            // 应用智能后处理管道
+            EnhancedDetectionResult detectionResult = yoloPostprocessPipeline(
+                    rawOutput, confThreshold, standardNmsThreshold, overlapNmsThreshold,
+                    INPUT_SIZE, imageType, image.width(), image.height()
             );
 
-            // Get Python-like result with class names
-            Map<String, Object> pythonResult = result.getPythonLikeResult();
+            // 清理资源
+            inputTensor.close();
+            result.close();
+            preprocessedImage.release();
 
-            // Extract landmark quantities (Map<String, Integer>) - matches Python detection['landmark_quantities']
-            Map<String, Integer> landmarkQuantities = (Map<String, Integer>) pythonResult.get("landmark_quantities");
-            if (landmarkQuantities == null) {
-                landmarkQuantities = new HashMap<>();
-            }
+            Log.i(TAG, String.format("完成%s图像的检测", imageType));
+            detectionResult.logResults(TAG);
 
-            // Extract treasure quantities and get the keys (types) - matches Python detection['treasure_quantities'].keys()
-            Map<String, Integer> treasureQuantities = (Map<String, Integer>) pythonResult.get("treasure_quantities");
-            if (treasureQuantities == null) {
-                treasureQuantities = new HashMap<>();
-            }
-            Set<String> treasureTypes = new HashSet<>(treasureQuantities.keySet());
-
-            // Log results (matches Python print statements)
-            Log.i(TAG, "Landmark quantities: " + landmarkQuantities);
-            Log.i(TAG, "Treasure types: " + treasureTypes);
-
-            // Return as array: [landmark_quantities, treasure_types]
-            // This matches Python: report_landmark.append(detection['landmark_quantities'])
-            //                     store_treasure.append(detection['treasure_quantities'].keys())
-            return new Object[]{landmarkQuantities, treasureTypes};
+            return detectionResult;
 
         } catch (Exception e) {
-            Log.e(TAG, "Error in detectitemfromcvimg: " + e.getMessage(), e);
-            // Return empty results on error
-            return new Object[]{new HashMap<String, Integer>(), new HashSet<String>()};
-        } finally {
-            // Clean up YOLO service
-            if (yoloService != null) {
-                yoloService.close();
-            }
+            Log.e(TAG, "检测失败: " + e.getMessage(), e);
+            return new EnhancedDetectionResult();
         }
     }
 
     /**
-     * Helper method to get the first landmark item and its count (matches Python usage pattern)
-     * @param landmarkQuantities Map of landmark quantities
-     * @return String array: [landmark_name, count_as_string] or null if empty
+     * 使用默认参数的便捷方法
      */
-    private String[] getFirstLandmarkItem(Map<String, Integer> landmarkQuantities) {
-        if (landmarkQuantities != null && !landmarkQuantities.isEmpty()) {
-            // Get first entry (matches Python landmark_items.keys()[0])
-            Map.Entry<String, Integer> firstEntry = landmarkQuantities.entrySet().iterator().next();
-            String landmarkName = firstEntry.getKey();
-            Integer count = firstEntry.getValue();
-            return new String[]{landmarkName, String.valueOf(count)};
+    public EnhancedDetectionResult DetectfromcvImage(Mat image, String imageType) {
+        return DetectfromcvImage(image, imageType, DEFAULT_CONF_THRESHOLD,
+                DEFAULT_STANDARD_NMS_THRESHOLD, DEFAULT_OVERLAP_NMS_THRESHOLD);
+    }
+
+    /**
+     * 兼容现有代码的方法，返回简单类计数
+     * @param image OpenCV Mat图像
+     * @return 使用"lost"检测逻辑的类ID到计数的映射
+     */
+    public Map<Integer, Integer> getItemCounts(Mat image) {
+        EnhancedDetectionResult result = DetectfromcvImage(image, "lost");
+        return result.getAllQuantities();
+    }
+
+    /**
+     * 获取类名数组供外部使用
+     * @return 类名数组
+     */
+    public static String[] getClassNames() {
+        return CLASS_NAMES.clone();
+    }
+
+    /**
+     * 通过ID获取类名
+     * @param classId 类ID（从0开始）
+     * @return 类名，如果ID无效则返回null
+     */
+    public static String getClassName(int classId) {
+        if (classId >= 0 && classId < CLASS_NAMES.length) {
+            return CLASS_NAMES[classId];
         }
         return null;
     }
 
     /**
-     * Enhanced image processing method that detects ArUco markers, crops region,
-     * applies CLAHE enhancement, and binarizes the image
-     * @param image Input image from NavCam
-     * @param cropWarpSize Size for the cropped/warped image (e.g., 640x480)
-     * @param resizeSize Size for the final processed image (e.g., 320x320)
-     * @param areaId Area identifier for filename generation
-     * @return Processed CLAHE + Otsu binarized image, or null if no markers detected
+     * 增强型后处理管道，匹配Python逻辑
      */
-    private Mat imageEnhanceAndCrop(Mat image, Size cropWarpSize, Size resizeSize, int areaId) {
-        try {
-            // Save original test image with area ID
-            String rawImageFilename = "area_" + areaId + "_raw.png";
-            api.saveMatImage(image, rawImageFilename);
-            Log.i(TAG, "Raw image saved as " + rawImageFilename);
+    private EnhancedDetectionResult yoloPostprocessPipeline(float[][][] rawTensor,
+                                                            float confThreshold,
+                                                            float standardNmsThreshold,
+                                                            float overlapNmsThreshold,
+                                                            int imgSize,
+                                                            String imgType,
+                                                            int originalWidth,
+                                                            int originalHeight) {
+        Log.i(TAG, String.format("原始张量形状: [%d, %d, %d]",
+                rawTensor.length, rawTensor[0].length, rawTensor[0][0].length));
 
-            // Initialize ArUco detection
-            Dictionary dictionary = Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250);
-            List<Mat> corners = new ArrayList<>();
-            Mat ids = new Mat();
+        // ====================================================================
+        // 关键修复: 将张量从[1, 15, 2100]转置为[1, 2100, 15]
+        // 这与Python相匹配: processed_tensor = raw_tensor.transpose(1, 2)
+        // ====================================================================
 
-            // Detect markers
-            Aruco.detectMarkers(image, dictionary, corners, ids);
+        float[][] processed;
+        int numDetections, numFeatures;
 
-            if (corners.size() > 0) {
-                Log.i(TAG, "Detected " + corners.size() + " markers.");
+        // 检查是否需要转置（匹配Python逻辑）
+        if (rawTensor[0].length < rawTensor[0][0].length) {
+            // 需要从[15, 2100]转置为[2100, 15]
+            Log.i(TAG, "将张量从[15, 2100]转置为[2100, 15]");
 
-                // Keep only the closest marker to image center
-                Object[] filtered = keepClosestMarker(corners, ids, image);
-                List<Mat> filteredCorners = (List<Mat>) filtered[0];
-                Mat filteredIds = (Mat) filtered[1];
+            numDetections = rawTensor[0][0].length;  // 2100
+            numFeatures = rawTensor[0].length;       // 15
 
-                // Clean up original corners and ids (now safe since we cloned the data)
-                for (Mat corner : corners) {
-                    corner.release();
+            processed = new float[numDetections][numFeatures];
+
+            // 转置: processed[detection][feature] = rawTensor[0][feature][detection]
+            for (int det = 0; det < numDetections; det++) {
+                for (int feat = 0; feat < numFeatures; feat++) {
+                    processed[det][feat] = rawTensor[0][feat][det];
                 }
-                ids.release();
+            }
 
-                Log.i(TAG, "Using closest marker. Remaining markers: " + filteredCorners.size());
+        } else {
+            // 已经是正确格式[2100, 15]
+            Log.i(TAG, "张量已经是正确格式");
+            processed = rawTensor[0];
+            numDetections = processed.length;
+            numFeatures = processed[0].length;
+        }
 
-                // Get camera parameters
-                double[][] intrinsics = api.getNavCamIntrinsics();
-                Mat cameraMatrix = new Mat(3, 3, CvType.CV_64F);
-                Mat distCoeffs = new Mat(1, 5, CvType.CV_64F);
+        Log.i(TAG, String.format("处理%d个检测提案，每个有%d个特征",
+                numDetections, numFeatures));
 
-                cameraMatrix.put(0, 0, intrinsics[0]);
-                distCoeffs.put(0, 0, intrinsics[1]);
-                distCoeffs.convertTo(distCoeffs, CvType.CV_64F);
+        // 记录每个特征在所有检测中的最小/最大值（匹配Python的第0-14层）
+        Log.i(TAG, "所有检测中特征的最小/最大值:");
+        for (int featIdx = 0; featIdx < numFeatures; featIdx++) {
+            float minValue = Float.MAX_VALUE;
+            float maxValue = Float.MIN_VALUE;
 
-                // Estimate pose for first marker
-                Mat rvecs = new Mat();
-                Mat tvecs = new Mat();
-                float markerLength = 0.05f; // 5cm markers
+            // 在所有检测中找出这个特征的最小/最大值
+            for (int detIdx = 0; detIdx < numDetections; detIdx++) {
+                float value = processed[detIdx][featIdx];
+                minValue = Math.min(minValue, value);
+                maxValue = Math.max(maxValue, value);
+            }
 
-                Aruco.estimatePoseSingleMarkers(filteredCorners, markerLength, cameraMatrix, distCoeffs, rvecs, tvecs);
+            // 这现在应该匹配Python的"Layer X: min=..., max=..."
+            Log.i(TAG, String.format("层 %d: 最小值=%.6f, 最大值=%.6f",
+                    featIdx, minValue, maxValue));
+        }
 
-                // Process first marker only
-                Mat imageWithFrame = image.clone();
-                Aruco.drawDetectedMarkers(imageWithFrame, filteredCorners, filteredIds);
+        List<DetectionCandidate> candidates = new ArrayList<>();
 
-                if (rvecs.rows() > 0 && tvecs.rows() > 0) {
-                    Mat rvec = new Mat(3, 1, CvType.CV_64F);
-                    Mat tvec = new Mat(3, 1, CvType.CV_64F);
+        // 步骤1：提取所有高于置信度阈值的检测候选者
+        for (int i = 0; i < processed.length; i++) {
+            float[] prediction = processed[i];
 
-                    rvecs.row(0).copyTo(rvec);
-                    tvecs.row(0).copyTo(tvec);
+            if (prediction.length < 5) continue;
 
-                    // Convert to RGB and draw axis
-                    Imgproc.cvtColor(imageWithFrame, imageWithFrame, Imgproc.COLOR_GRAY2RGB);
-                    Aruco.drawAxis(imageWithFrame, cameraMatrix, distCoeffs, rvec, tvec, 0.1f);
+            // 提取边界框和类别分数
+            float centerX = prediction[0];
+            float centerY = prediction[1];
+            float width = prediction[2];
+            float height = prediction[3];
 
-                    // Save marker with frame using area ID
-                    String markerFilename = "area_" + areaId + "_marker_0_with_frame.png";
-                    api.saveMatImage(imageWithFrame, markerFilename);
-                    Log.i(TAG, "Marker image saved as " + markerFilename);
+            // 检查所有类别分数
+            for (int classId = 0; classId < CLASS_NAMES.length; classId++) {
+                float classScore = prediction[4 + classId];
 
-                    // Process crop region and return enhanced image with custom sizes
-                    Mat processedImage = processCropRegion(image, cameraMatrix, distCoeffs, rvec, tvec, cropWarpSize, resizeSize, areaId);
+                if (classScore > confThreshold) {
+                    // 将坐标缩放回原始图像大小
+                    float scaleX = (float) originalWidth / imgSize;
+                    float scaleY = (float) originalHeight / imgSize;
 
-                    // Clean up
-                    rvec.release();
-                    tvec.release();
-                    imageWithFrame.release();
-                    cameraMatrix.release();
-                    distCoeffs.release();
-                    rvecs.release();
-                    tvecs.release();
+                    float scaledCenterX = centerX * scaleX;
+                    float scaledCenterY = centerY * scaleY;
+                    float scaledWidth = width * scaleX;
+                    float scaledHeight = height * scaleY;
 
-                    // Clean up filtered corners and ids
-                    filteredIds.release();
-                    for (Mat corner : filteredCorners) {
-                        corner.release();
+                    candidates.add(new DetectionCandidate(
+                            scaledCenterX, scaledCenterY, scaledWidth, scaledHeight,
+                            classScore, classId
+                    ));
+                }
+            }
+        }
+
+        Log.i(TAG, String.format("总检测候选者: %d", candidates.size()));
+
+        // 步骤2：分离宝藏和地标候选者
+        List<DetectionCandidate> treasureCandidates = new ArrayList<>();
+        List<DetectionCandidate> landmarkCandidates = new ArrayList<>();
+
+        for (DetectionCandidate candidate : candidates) {
+            if (TREASURE_IDS.contains(candidate.classId)) {
+                treasureCandidates.add(candidate);
+            } else if (LANDMARK_IDS.contains(candidate.classId)) {
+                landmarkCandidates.add(candidate);
+            }
+        }
+
+        Log.i(TAG, String.format("宝藏候选者: %d, 地标候选者: %d",
+                treasureCandidates.size(), landmarkCandidates.size()));
+
+        // 步骤3：应用图像类型约束与智能NMS
+        return applyImageTypeConstraints(treasureCandidates, landmarkCandidates,
+                imgType, standardNmsThreshold, overlapNmsThreshold);
+    }
+
+    private EnhancedDetectionResult applyImageTypeConstraints(List<DetectionCandidate> treasureCandidates,
+                                                              List<DetectionCandidate> landmarkCandidates,
+                                                              String imgType,
+                                                              float standardNmsThreshold,
+                                                              float overlapNmsThreshold) {
+        List<FinalDetection> finalDetections = new ArrayList<>();
+        Map<Integer, Integer> treasureQuantities = new HashMap<>();
+        Map<Integer, Integer> landmarkQuantities = new HashMap<>();
+        Map<Integer, Integer> allQuantities = new HashMap<>();
+
+        if ("target".equals(imgType)) {
+            Log.i(TAG, "目标物品逻辑 - 应用标准NMS");
+
+            // 对宝藏和地标应用标准NMS
+            List<FinalDetection> treasureFinal = applyStandardNMS(treasureCandidates, standardNmsThreshold);
+            List<FinalDetection> landmarkFinal = applyStandardNMS(landmarkCandidates, standardNmsThreshold);
+
+            // NMS后计算数量
+            countQuantities(treasureFinal, treasureQuantities, allQuantities);
+            countQuantities(landmarkFinal, landmarkQuantities, allQuantities);
+
+            // 按置信度排序
+            treasureFinal.sort((a, b) -> Float.compare(b.confidence, a.confidence));
+            landmarkFinal.sort((a, b) -> Float.compare(b.confidence, a.confidence));
+
+            // 选择恰好1个宝藏 + 2个不同地标类型
+            if (!treasureFinal.isEmpty() && landmarkFinal.size() >= 2) {
+                finalDetections.add(treasureFinal.get(0));
+                Log.i(TAG, String.format("选择的宝藏: %s (置信度: %.3f)",
+                        CLASS_NAMES[treasureFinal.get(0).classId], treasureFinal.get(0).confidence));
+
+                Set<Integer> selectedLandmarkClasses = new HashSet<>();
+                for (FinalDetection landmark : landmarkFinal) {
+                    if (!selectedLandmarkClasses.contains(landmark.classId)) {
+                        finalDetections.add(landmark);
+                        selectedLandmarkClasses.add(landmark.classId);
+                        Log.i(TAG, String.format("选择的地标: %s (置信度: %.3f)",
+                                CLASS_NAMES[landmark.classId], landmark.confidence));
+
+                        if (selectedLandmarkClasses.size() == 2) break;
                     }
+                }
+            }
 
-                    return processedImage;
+        } else if ("lost".equals(imgType)) {
+            Log.i(TAG, "失物逻辑 - 应用智能NMS");
+
+            if (!treasureCandidates.isEmpty()) {
+                // 情况1: 1个地标 + 1个宝藏
+                Log.i(TAG, "情况1: 检测到宝藏 + 地标");
+
+                List<FinalDetection> treasureFinal = applyStandardNMS(treasureCandidates, standardNmsThreshold);
+                List<FinalDetection> landmarkFinal = applyLandmarkIntelligentNMS(landmarkCandidates, overlapNmsThreshold);
+
+                countQuantities(treasureFinal, treasureQuantities, allQuantities);
+                countQuantities(landmarkFinal, landmarkQuantities, allQuantities);
+
+                treasureFinal.sort((a, b) -> Float.compare(b.confidence, a.confidence));
+                landmarkFinal.sort((a, b) -> Float.compare(b.confidence, a.confidence));
+
+                if (!treasureFinal.isEmpty()) {
+                    finalDetections.add(treasureFinal.get(0));
+                    Log.i(TAG, String.format("选择的宝藏: %s (置信度: %.3f)",
+                            CLASS_NAMES[treasureFinal.get(0).classId], treasureFinal.get(0).confidence));
                 }
 
-                // Clean up if pose estimation failed
-                imageWithFrame.release();
-                cameraMatrix.release();
-                distCoeffs.release();
-                rvecs.release();
-                tvecs.release();
-                filteredIds.release();
-                for (Mat corner : filteredCorners) {
-                    corner.release();
+                if (!landmarkFinal.isEmpty()) {
+                    finalDetections.add(landmarkFinal.get(0));
+                    Log.i(TAG, String.format("选择的地标: %s (置信度: %.3f)",
+                            CLASS_NAMES[landmarkFinal.get(0).classId], landmarkFinal.get(0).confidence));
                 }
+
             } else {
-                Log.w(TAG, "No ArUco markers detected in image");
-                // Clean up empty lists
-                ids.release();
+                // 情况2: 只有地标
+                Log.i(TAG, "情况2: 只检测到地标");
+
+                List<FinalDetection> landmarkFinal = applyLandmarkIntelligentNMS(landmarkCandidates, overlapNmsThreshold);
+                countQuantities(landmarkFinal, landmarkQuantities, allQuantities);
+
+                landmarkFinal.sort((a, b) -> Float.compare(b.confidence, a.confidence));
+
+                if (!landmarkFinal.isEmpty()) {
+                    finalDetections.add(landmarkFinal.get(0));
+                    Log.i(TAG, String.format("选择的地标: %s (置信度: %.3f)",
+                            CLASS_NAMES[landmarkFinal.get(0).classId], landmarkFinal.get(0).confidence));
+                }
             }
+        }
 
-            return null; // No markers detected
+        return new EnhancedDetectionResult(finalDetections, allQuantities, treasureQuantities, landmarkQuantities);
+    }
 
-        } catch (Exception e) {
-            Log.e(TAG, "Error in imageEnhanceAndCrop: " + e.getMessage());
-            return null;
+    private List<FinalDetection> applyStandardNMS(List<DetectionCandidate> candidates, float nmsThreshold) {
+        if (candidates.size() <= 1) {
+            return convertToFinalDetections(candidates);
+        }
+
+        // 按置信度排序
+        candidates.sort((a, b) -> Float.compare(b.confidence, a.confidence));
+
+        List<DetectionCandidate> kept = new ArrayList<>();
+        boolean[] suppressed = new boolean[candidates.size()];
+
+        for (int i = 0; i < candidates.size(); i++) {
+            if (suppressed[i]) continue;
+
+            DetectionCandidate current = candidates.get(i);
+            kept.add(current);
+
+            for (int j = i + 1; j < candidates.size(); j++) {
+                if (suppressed[j]) continue;
+
+                DetectionCandidate other = candidates.get(j);
+                if (calculateIoU(current, other) > nmsThreshold) {
+                    suppressed[j] = true;
+                }
+            }
+        }
+
+        return convertToFinalDetections(kept);
+    }
+
+    private List<FinalDetection> applyLandmarkIntelligentNMS(List<DetectionCandidate> candidates, float overlapThreshold) {
+        if (candidates.size() <= 1) {
+            return convertToFinalDetections(candidates);
+        }
+
+        Log.i(TAG, String.format("对%d个地标检测应用智能NMS", candidates.size()));
+
+        // 找到最高置信度的检测及其类别
+        DetectionCandidate highest = candidates.stream()
+                .max(Comparator.comparingDouble(c -> c.confidence))
+                .orElse(null);
+
+        if (highest == null) return new ArrayList<>();
+
+        int selectedClass = highest.classId;
+        Log.i(TAG, String.format("选择的类别: %d (%s) 置信度: %.3f",
+                selectedClass, CLASS_NAMES[selectedClass], highest.confidence));
+
+        // 仅过滤出所选类别的检测
+        List<DetectionCandidate> sameClassCandidates = new ArrayList<>();
+        for (DetectionCandidate candidate : candidates) {
+            if (candidate.classId == selectedClass) {
+                sameClassCandidates.add(candidate);
+            }
+        }
+
+        Log.i(TAG, String.format("选择类别的检测数: %d/%d",
+                sameClassCandidates.size(), candidates.size()));
+
+        // 使用重叠阈值对相同类别的检测应用标准NMS
+        List<FinalDetection> result = applyStandardNMS(sameClassCandidates, overlapThreshold);
+
+        Log.i(TAG, String.format("智能NMS后保留的地标: %d/%d 类别 %s",
+                result.size(), sameClassCandidates.size(), CLASS_NAMES[selectedClass]));
+
+        return result;
+    }
+
+    private List<FinalDetection> convertToFinalDetections(List<DetectionCandidate> candidates) {
+        List<FinalDetection> result = new ArrayList<>();
+        for (DetectionCandidate candidate : candidates) {
+            result.add(new FinalDetection(
+                    candidate.centerX, candidate.centerY, candidate.width, candidate.height,
+                    candidate.confidence, candidate.classId
+            ));
+        }
+        return result;
+    }
+
+    private void countQuantities(List<FinalDetection> detections,
+                                 Map<Integer, Integer> specificQuantities,
+                                 Map<Integer, Integer> allQuantities) {
+        for (FinalDetection detection : detections) {
+            specificQuantities.put(detection.classId,
+                    specificQuantities.getOrDefault(detection.classId, 0) + 1);
+            allQuantities.put(detection.classId,
+                    allQuantities.getOrDefault(detection.classId, 0) + 1);
         }
     }
 
-    /**
-     * Helper method to process the crop region and apply CLAHE + binarization
-     */
-    private Mat processCropRegion(Mat image, Mat cameraMatrix, Mat distCoeffs, Mat rvec, Mat tvec, Size cropWarpSize, Size resizeSize, int areaId) {
+    private float calculateIoU(DetectionCandidate a, DetectionCandidate b) {
+        float x1_a = a.centerX - a.width / 2;
+        float y1_a = a.centerY - a.height / 2;
+        float x2_a = a.centerX + a.width / 2;
+        float y2_a = a.centerY + a.height / 2;
+
+        float x1_b = b.centerX - b.width / 2;
+        float y1_b = b.centerY - b.height / 2;
+        float x2_b = b.centerX + b.width / 2;
+        float y2_b = b.centerY + b.height / 2;
+
+        float intersectionX1 = Math.max(x1_a, x1_b);
+        float intersectionY1 = Math.max(y1_a, y1_b);
+        float intersectionX2 = Math.min(x2_a, x2_b);
+        float intersectionY2 = Math.min(y2_a, y2_b);
+
+        if (intersectionX2 <= intersectionX1 || intersectionY2 <= intersectionY1) {
+            return 0.0f;
+        }
+
+        float intersectionArea = (intersectionX2 - intersectionX1) * (intersectionY2 - intersectionY1);
+        float areaA = a.width * a.height;
+        float areaB = b.width * b.height;
+        float unionArea = areaA + areaB - intersectionArea;
+
+        return intersectionArea / unionArea;
+    }
+
+    private Mat preprocessImage(Mat image) {
+        Mat processedImage = new Mat();
+
+        // 如果需要，转换为RGB
+        if (image.channels() == 1) {
+            Imgproc.cvtColor(image, processedImage, Imgproc.COLOR_GRAY2RGB);
+        } else if (image.channels() == 4) {
+            Imgproc.cvtColor(image, processedImage, Imgproc.COLOR_BGRA2RGB);
+        } else if (image.channels() == 3) {
+            Imgproc.cvtColor(image, processedImage, Imgproc.COLOR_BGR2RGB);
+        } else {
+            image.copyTo(processedImage);
+        }
+
+        // 调整大小至模型输入尺寸
+        Mat resizedImage = new Mat();
+        Imgproc.resize(processedImage, resizedImage, new Size(INPUT_SIZE, INPUT_SIZE));
+
+        processedImage.release();
+        return resizedImage;
+    }
+
+    private float[][][][] matToFloatArray(Mat image) {
+        float[][][][] inputData = new float[1][3][INPUT_SIZE][INPUT_SIZE];
+
+        for (int y = 0; y < INPUT_SIZE; y++) {
+            for (int x = 0; x < INPUT_SIZE; x++) {
+                double[] pixel = image.get(y, x);
+
+                // 归一化至[0, 1]
+                inputData[0][0][y][x] = (float) (pixel[0] / 255.0);
+                inputData[0][1][y][x] = (float) (pixel[1] / 255.0);
+                inputData[0][2][y][x] = (float) (pixel[2] / 255.0);
+            }
+        }
+
+        return inputData;
+    }
+
+    public void close() {
         try {
-            // Define crop area corners in 3D (manually adjusted)
-            org.opencv.core.Point3[] cropCorners3D = {
-                    new org.opencv.core.Point3(-0.0265, 0.0420, 0),    // Top-left
-                    new org.opencv.core.Point3(-0.2385, 0.0420, 0),   // Top-right
-                    new org.opencv.core.Point3(-0.2385, -0.1170, 0),  // Bottom-right
-                    new org.opencv.core.Point3(-0.0265, -0.1170, 0)   // Bottom-left
-            };
-
-            MatOfPoint3f cropCornersMat = new MatOfPoint3f(cropCorners3D);
-            MatOfPoint2f cropCorners2D = new MatOfPoint2f();
-
-            // Convert distortion coefficients
-            double[] distData = new double[5];
-            distCoeffs.get(0, 0, distData);
-            MatOfDouble distCoeffsDouble = new MatOfDouble();
-            distCoeffsDouble.fromArray(distData);
-
-            // Project crop corners to 2D
-            Calib3d.projectPoints(cropCornersMat, rvec, tvec, cameraMatrix, distCoeffsDouble, cropCorners2D);
-            org.opencv.core.Point[] cropPoints2D = cropCorners2D.toArray();
-
-            if (cropPoints2D.length == 4) {
-                // Create perspective transformation and get processed image with custom sizes
-                Mat processedImage = cropEnhanceAndBinarize(image, cropPoints2D, cropWarpSize, resizeSize, areaId);
-
-                // Clean up
-                cropCornersMat.release();
-                cropCorners2D.release();
-                distCoeffsDouble.release();
-
-                return processedImage;
+            if (session != null) {
+                session.close();
             }
-
-            // Clean up if crop failed
-            cropCornersMat.release();
-            cropCorners2D.release();
-            distCoeffsDouble.release();
-
-            return null;
-
+            if (env != null) {
+                env.close();
+            }
         } catch (Exception e) {
-            Log.e(TAG, "Error in processCropRegion: " + e.getMessage());
-            return null;
+            Log.e(TAG, "关闭YOLO服务时出错: " + e.getMessage(), e);
         }
     }
+
+    // 辅助类
+    public static class DetectionCandidate {
+        public final float centerX, centerY, width, height;
+        public final float confidence;
+        public final int classId;
+
+        public DetectionCandidate(float centerX, float centerY, float width, float height,
+                                  float confidence, int classId) {
+            this.centerX = centerX;
+            this.centerY = centerY;
+            this.width = width;
+            this.height = height;
+            this.confidence = confidence;
+            this.classId = classId;
+        }
+    }
+
+    public static class FinalDetection {
+        public final float centerX, centerY, width, height;
+        public final float confidence;
+        public final int classId;
+
+        public FinalDetection(float centerX, float centerY, float width, float height,
+                              float confidence, int classId) {
+            this.centerX = centerX;
+            this.centerY = centerY;
+            this.width = width;
+            this.height = height;
+            this.confidence = confidence;
+            this.classId = classId;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("检测[类别=%s, 置信度=%.2f, 中心=(%.1f,%.1f), 大小=(%.1f,%.1f)]",
+                    CLASS_NAMES[classId], confidence, centerX, centerY, width, height);
+        }
+    }
+
+    public static class EnhancedDetectionResult {
+        private List<FinalDetection> detections;
+        private Map<Integer, Integer> allQuantities;
+        private Map<Integer, Integer> treasureQuantities;
+        private Map<Integer, Integer> landmarkQuantities;
+
+        public EnhancedDetectionResult() {
+            this.detections = new ArrayList<>();
+            this.allQuantities = new HashMap<>();
+            this.treasureQuantities = new HashMap<>();
+            this.landmarkQuantities = new HashMap<>();
+        }
+
+        public EnhancedDetectionResult(List<FinalDetection> detections,
+                                       Map<Integer, Integer> allQuantities,
+                                       Map<Integer, Integer> treasureQuantities,
+                                       Map<Integer, Integer> landmarkQuantities) {
+            this.detections = detections;
+            this.allQuantities = allQuantities;
+            this.treasureQuantities = treasureQuantities;
+            this.landmarkQuantities = landmarkQuantities;
+        }
+
+        public List<FinalDetection> getDetections() { return detections; }
+        public Map<Integer, Integer> getAllQuantities() { return allQuantities; }
+        public Map<Integer, Integer> getTreasureQuantities() { return treasureQuantities; }
+        public Map<Integer, Integer> getLandmarkQuantities() { return landmarkQuantities; }
 
         /**
-     * Helper method to crop, enhance with CLAHE, and binarize the image
-     * @param image Input image
-     * @param cropPoints2D 2D points for perspective transformation
-     * @param cropWarpSize Size for the cropped/warped image (configurable)
-     * @param resizeSize Size for the final processed image (configurable)
-     * @param areaId Area identifier for filename generation
-     */
-    private Mat cropEnhanceAndBinarize(Mat image, org.opencv.core.Point[] cropPoints2D, Size cropWarpSize, Size resizeSize, int areaId) {
-        try {
-            // ========================================================================
-            // STEP 1: Create cropped image with configurable size
-            // ========================================================================
+         * 获取Python格式的结果
+         * @return 包含以类名为键的数量的映射
+         */
+        public Map<String, Object> getPythonLikeResult() {
+            Map<String, Object> result = new HashMap<>();
 
-            // Define destination points for configurable rectangle
-            org.opencv.core.Point[] dstPointsCrop = {
-                    new org.opencv.core.Point(0, 0),                           // Top-left
-                    new org.opencv.core.Point(cropWarpSize.width - 1, 0),      // Top-right
-                    new org.opencv.core.Point(cropWarpSize.width - 1, cropWarpSize.height - 1),   // Bottom-right
-                    new org.opencv.core.Point(0, cropWarpSize.height - 1)      // Bottom-left
-            };
+            // 将所有数量转换为使用类名
+            Map<String, Integer> allQuantitiesNamed = new HashMap<>();
+            for (Map.Entry<Integer, Integer> entry : allQuantities.entrySet()) {
+                allQuantitiesNamed.put(CLASS_NAMES[entry.getKey()], entry.getValue());
+            }
 
-            // Create source and destination point matrices
-            MatOfPoint2f srcPointsMat = new MatOfPoint2f(cropPoints2D);
-            MatOfPoint2f dstPointsMatCrop = new MatOfPoint2f(dstPointsCrop);
+            // 将宝藏数量转换为使用类名
+            Map<String, Integer> treasureQuantitiesNamed = new HashMap<>();
+            for (Map.Entry<Integer, Integer> entry : treasureQuantities.entrySet()) {
+                treasureQuantitiesNamed.put(CLASS_NAMES[entry.getKey()], entry.getValue());
+            }
 
-            // Calculate perspective transformation matrix
-            Mat perspectiveMatrixCrop = Imgproc.getPerspectiveTransform(srcPointsMat, dstPointsMatCrop);
+            // 将地标数量转换为使用类名
+            Map<String, Integer> landmarkQuantitiesNamed = new HashMap<>();
+            for (Map.Entry<Integer, Integer> entry : landmarkQuantities.entrySet()) {
+                landmarkQuantitiesNamed.put(CLASS_NAMES[entry.getKey()], entry.getValue());
+            }
 
-            // Apply perspective transformation to get cropped image
-            Mat croppedImage = new Mat();
-            Imgproc.warpPerspective(image, croppedImage, perspectiveMatrixCrop, cropWarpSize);
+            result.put("all_quantities", allQuantitiesNamed);
+            result.put("treasure_quantities", treasureQuantitiesNamed);
+            result.put("landmark_quantities", landmarkQuantitiesNamed);
 
-            // Print min/max values of the cropped image
-            Core.MinMaxLocResult minMaxResultCrop = Core.minMaxLoc(croppedImage);
-            Log.i(TAG, String.format("Cropped image %.0fx%.0f - Min: %.2f, Max: %.2f",
-                    cropWarpSize.width, cropWarpSize.height, minMaxResultCrop.minVal, minMaxResultCrop.maxVal));
+            return result;
+        }
 
-            // Save the cropped image with area ID and dynamic filename
-            String cropFilename = String.format("area_%d_cropped_region_%.0fx%.0f.png", areaId, cropWarpSize.width, cropWarpSize.height);
-            api.saveMatImage(croppedImage, cropFilename);
-            Log.i(TAG, "Cropped region saved as " + cropFilename);
+        public void logResults(String tag) {
+            Log.i(tag, String.format("总检测数: %d", detections.size()));
 
-            // ========================================================================
-            // STEP 2: Resize to final processing size (configurable)
-            // ========================================================================
-
-            // Resize the cropped image to final size
-            Mat resizedImage = new Mat();
-            Imgproc.resize(croppedImage, resizedImage, resizeSize);
-
-            // Save resized image with area ID
-            String resizeFilename = String.format("area_%d_yolo_original_%.0fx%.0f.png", areaId, resizeSize.width, resizeSize.height);
-            api.saveMatImage(resizedImage, resizeFilename);
-            Log.i(TAG, "Resized image saved as " + resizeFilename);
-
-            // ========================================================================
-            // STEP 3: Apply CLAHE enhancement (FINAL OUTPUT)
-            // ========================================================================
-
-            // Apply CLAHE for better contrast enhancement
-            Mat claheImage = new Mat();
-            CLAHE clahe = Imgproc.createCLAHE();
-            clahe.setClipLimit(2.0);  // Controls contrast enhancement
-
-            // Adjust grid size based on image size
-            int gridSize = (int) Math.max(8, Math.min(resizeSize.width, resizeSize.height) / 40);
-            clahe.setTilesGridSize(new Size(gridSize, gridSize));
-
-            clahe.apply(resizedImage, claheImage);
-
-            // Print min/max values of the CLAHE-enhanced image
-            Core.MinMaxLocResult claheMinMaxResult = Core.minMaxLoc(claheImage);
-            Log.i(TAG, String.format("CLAHE enhanced image (%.0fx%.0f) - Min: %.2f, Max: %.2f",
-                    resizeSize.width, resizeSize.height, claheMinMaxResult.minVal, claheMinMaxResult.maxVal));
-
-            // Save CLAHE enhanced image with area ID
-            String claheFilename = String.format("area_%d_yolo_clahe_%.0fx%.0f.png", areaId, resizeSize.width, resizeSize.height);
-            api.saveMatImage(claheImage, claheFilename);
-            Log.i(TAG, "CLAHE enhanced image saved as " + claheFilename);
-
-            // ========================================================================
-            // STEP 4: Apply Otsu's binarization (FOR DEBUG ONLY - NOT RETURNED)
-            // ========================================================================
-
-            // Apply Otsu's automatic threshold binarization for debugging purposes
-            Mat binarizedOtsu = new Mat();
-            double otsuThreshold = Imgproc.threshold(claheImage, binarizedOtsu, 0, 255,
-                    Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU);
-
-            // Print min/max values and threshold of Otsu binarized image
-            Core.MinMaxLocResult binaryOtsuResult = Core.minMaxLoc(binarizedOtsu);
-            Log.i(TAG, String.format("Binary Otsu (%.1f) - Min: %.2f, Max: %.2f",
-                    otsuThreshold, binaryOtsuResult.minVal, binaryOtsuResult.maxVal));
-
-            // Save the Otsu binarized image for debugging purposes
-            String binaryFilename = String.format("area_%d_debug_binary_otsu_%.0fx%.0f.png", areaId, resizeSize.width, resizeSize.height);
-            api.saveMatImage(binarizedOtsu, binaryFilename);
-            Log.i(TAG, String.format("Debug binary image saved as %s (threshold: %.1f)", binaryFilename, otsuThreshold));
-
-            // ========================================================================
-            // CLEANUP
-            // ========================================================================
-
-            // Clean up intermediate images (but NOT claheImage - that's our return value)
-            srcPointsMat.release();
-            dstPointsMatCrop.release();
-            perspectiveMatrixCrop.release();
-            croppedImage.release();
-            resizedImage.release();
-            binarizedOtsu.release();  // Release the debug binary image
-
-            // Return the CLAHE enhanced image (instead of binary)
-            return claheImage;
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error in cropEnhanceAndBinarize: " + e.getMessage());
-            return null;
+            Map<String, Object> pythonResult = getPythonLikeResult();
+            Log.i(tag, "所有数量: " + pythonResult.get("all_quantities"));
+            Log.i(tag, "宝藏数量: " + pythonResult.get("treasure_quantities"));
+            Log.i(tag, "地标数量: " + pythonResult.get("landmark_quantities"));
         }
     }
-
-    /**
-     * FIXED: Keep only the marker closest to the image center
-     * This version properly handles corner data format for ArUco
-     * @param corners List of detected marker corners
-     * @param ids Mat containing marker IDs
-     * @param image Original image (to get center coordinates)
-     * @return Object array: [filtered_corners, filtered_ids]
-     */
-    private Object[] keepClosestMarker(List<Mat> corners, Mat ids, Mat image) {
-        if (corners.size() == 0) {
-            return new Object[]{new ArrayList<Mat>(), new Mat()};
-        }
-
-        if (corners.size() == 1) {
-            // For single marker, still clone the data to avoid memory issues
-            List<Mat> clonedCorners = new ArrayList<>();
-            clonedCorners.add(corners.get(0).clone());
-
-            Mat clonedIds = new Mat();
-            if (ids.rows() > 0) {
-                ids.copyTo(clonedIds);
-            }
-
-            Log.i(TAG, "Single marker detected, using it.");
-            return new Object[]{clonedCorners, clonedIds};
-        }
-
-        Log.i(TAG, "Multiple markers detected (" + corners.size() + "), finding closest to center...");
-
-        // Calculate image center
-        double imageCenterX = image.cols() / 2.0;
-        double imageCenterY = image.rows() / 2.0;
-
-        int closestIndex = 0;
-        double minDistance = Double.MAX_VALUE;
-
-        // Find the marker closest to image center
-        for (int i = 0; i < corners.size(); i++) {
-            Mat corner = corners.get(i);
-
-            // Validate corner data format
-            if (corner.rows() != 1 || corner.cols() != 4 || corner.channels() != 2) {
-                Log.w(TAG, String.format("Invalid corner format for marker %d: %dx%d channels=%d",
-                        i, corner.rows(), corner.cols(), corner.channels()));
-                continue;
-            }
-
-            // Extract the 4 corner points safely
-            float[] cornerData = new float[8]; // 4 points * 2 coordinates
-            corner.get(0, 0, cornerData);
-
-            // Calculate marker center (average of 4 corners)
-            double markerCenterX = 0;
-            double markerCenterY = 0;
-
-            for (int j = 0; j < 4; j++) {
-                markerCenterX += cornerData[j * 2];     // x coordinates
-                markerCenterY += cornerData[j * 2 + 1]; // y coordinates
-            }
-
-            markerCenterX /= 4.0;
-            markerCenterY /= 4.0;
-
-            // Calculate distance to image center
-            double distance = Math.sqrt(
-                    Math.pow(markerCenterX - imageCenterX, 2) +
-                            Math.pow(markerCenterY - imageCenterY, 2)
-            );
-
-            Log.i(TAG, String.format("Marker %d center: (%.1f, %.1f), distance: %.1f",
-                    i, markerCenterX, markerCenterY, distance));
-
-            if (distance < minDistance) {
-                minDistance = distance;
-                closestIndex = i;
-            }
-        }
-
-        Log.i(TAG, "Closest marker: index " + closestIndex + ", distance: " + minDistance);
-
-        // Create filtered results with properly cloned data
-        List<Mat> filteredCorners = new ArrayList<>();
-        Mat selectedCorner = corners.get(closestIndex);
-
-        // Ensure the corner data is in the correct format and clone it
-        if (selectedCorner.rows() == 1 && selectedCorner.cols() == 4 && selectedCorner.channels() == 2) {
-            Mat clonedCorner = selectedCorner.clone();
-            filteredCorners.add(clonedCorner);
-        } else {
-            Log.e(TAG, String.format("Selected corner has invalid format: %dx%d channels=%d",
-                    selectedCorner.rows(), selectedCorner.cols(), selectedCorner.channels()));
-            return new Object[]{new ArrayList<Mat>(), new Mat()};
-        }
-
-        // Also filter the IDs to match
-        Mat filteredIds = new Mat();
-        if (ids.rows() > closestIndex) {
-            // Create a 1x1 matrix with the selected ID
-            int[] idData = new int[1];
-            ids.get(closestIndex, 0, idData);
-            filteredIds = new Mat(1, 1, CvType.CV_32S);
-            filteredIds.put(0, 0, idData);
-        }
-
-        return new Object[]{filteredCorners, filteredIds};
-    }
-
-    /**
-     * Verifies that ArUco markers are visible by taking pictures at regular intervals
-     * @param maxWaitTimeMs Maximum time to wait (e.g., 2000)
-     * @param intervalMs Interval between attempts (e.g., 200)
-     * @param debugPrefix Prefix for saved debug images (e.g., "astronaut")
-     * @return true if markers detected, false if timeout
-     */
-    private boolean waitForMarkersDetection(int maxWaitTimeMs, int intervalMs, String debugPrefix) {
-        boolean markersDetected = false;
-        int maxAttempts = maxWaitTimeMs / intervalMs;
-        int attempts = 0;
-        long startTime = System.currentTimeMillis();
-
-        Log.i(TAG, String.format("Starting marker detection verification - max %dms, interval %dms",
-                maxWaitTimeMs, intervalMs));
-
-        while (!markersDetected && attempts < maxAttempts) {
-            try {
-                // Take a picture
-                Mat testImage = api.getMatNavCam();
-
-                if (testImage != null) {
-                    // Initialize ArUco detection
-                    Dictionary dictionary = Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250);
-                    List<Mat> corners = new ArrayList<>();
-                    Mat ids = new Mat();
-
-                    // Detect markers
-                    Aruco.detectMarkers(testImage, dictionary, corners, ids);
-
-                    if (corners.size() > 0) {
-                        markersDetected = true;
-                        long elapsedTime = System.currentTimeMillis() - startTime;
-                        Log.i(TAG, String.format("SUCCESS: %d markers detected after %d attempts (%.1fs)",
-                                corners.size(), attempts + 1, elapsedTime / 1000.0));
-
-                        // Save successful image for debugging
-                        api.saveMatImage(testImage, debugPrefix + "_markers_detected.png");
-                    } else {
-                        Log.d(TAG, String.format("Attempt %d/%d: No markers detected", attempts + 1, maxAttempts));
-                    }
-
-                    // Clean up ArUco detection resources
-                    for (Mat corner : corners) {
-                        corner.release();
-                    }
-                    ids.release();
-
-                    // Clean up test image
-                    testImage.release();
-                } else {
-                    Log.w(TAG, "Failed to get image from camera on attempt " + (attempts + 1));
-                }
-
-                attempts++;
-
-                // Wait before next attempt (only if not the last attempt)
-                if (!markersDetected && attempts < maxAttempts) {
-                    Thread.sleep(intervalMs);
-                }
-
-            } catch (InterruptedException e) {
-                Log.w(TAG, "Sleep interrupted during marker detection");
-                break;
-            } catch (Exception e) {
-                Log.e(TAG, "Error during marker detection attempt " + (attempts + 1) + ": " + e.getMessage());
-                attempts++;
-
-                // Still wait before next attempt
-                if (attempts < maxAttempts) {
-                    try {
-                        Thread.sleep(intervalMs);
-                    } catch (InterruptedException ie) {
-                        Log.w(TAG, "Sleep interrupted after error");
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Log final result
-        long totalTime = System.currentTimeMillis() - startTime;
-        if (markersDetected) {
-            Log.i(TAG, String.format("%s position verified - markers visible", debugPrefix));
-            return true;
-        } else {
-            Log.w(TAG, String.format("WARNING: No markers detected at %s after %d attempts (%.1fs)",
-                    debugPrefix, attempts, totalTime / 1000.0));
-            return false;
-        }
-    }
-
-
-
-
-
-    // You can add your method.
-    private String yourMethod(){
-        return "your method";
-    }
-
-
-
 }

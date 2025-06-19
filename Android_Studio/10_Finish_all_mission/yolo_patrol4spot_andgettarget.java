@@ -188,6 +188,9 @@ public class YourService extends KiboRpcService {
                     }
                     treasure_types.addAll(singleTreasures);
 
+                    // Release resources for this processed image
+                    claHeBinImage.release();
+
                 }
 
                 Log.i(TAG, "Area " + areaId + " - Landmark quantities: " + landmark_items);

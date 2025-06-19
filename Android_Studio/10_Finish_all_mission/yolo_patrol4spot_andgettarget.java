@@ -54,8 +54,8 @@ public class YourService extends KiboRpcService {
 
     // 在类成员变量区域添加
     private Set<String> reportedLandmarks = new HashSet<>();
-    private final String[] ALL_POSSIBLE_LANDMARKS = { "red_bull", "chips", "battery", "pickel", "lemon", "candy",
-            "wine", "coin" };
+    private final String[] ALL_POSSIBLE_LANDMARKS = { "coin", "compass", "coral", "crystal", "diamond", "emerald",
+            "fossil", "key", "letter", "shell", "treasure_box" };
     private Map<Integer, Set<String>> areaLandmarkTypes = new HashMap<>();
 
     @Override

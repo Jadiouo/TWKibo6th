@@ -21,8 +21,6 @@ import org.opencv.aruco.Aruco;
 import org.opencv.core.*;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.calib3d.Calib3d;
-import org.opencv.imgcodecs.Imgcodecs;
-import org.opencv.photo.Photo;
 
 public class YourService extends KiboRpcService {
 

@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.Arrays;
 
 // OpenCV imports
 import org.opencv.aruco.Dictionary;
@@ -30,6 +31,13 @@ public class YourService extends KiboRpcService {
     private Set<String> foundTreasures = new HashSet<>();
     private Set<String> foundLandmarks = new HashSet<>();  // Add this line
     private Map<String, Map<String, Integer>> areaLandmarks = new HashMap<>();
+
+    // Keep track of landmarks reported to the API
+    private Set<String> reportedLandmarks = new HashSet<>();
+    private final String[] ALL_POSSIBLE_LANDMARKS = {
+            "coin", "compass", "coral", "crystal", "diamond", "emerald",
+            "fossil", "key", "letter", "shell", "treasure_box"
+    };
 
 
     // Area coordinates and orientations for all 4 areas 
@@ -148,13 +156,15 @@ public class YourService extends KiboRpcService {
                 String currentlandmark_items = firstLandmark[0];
                 int landmarkCount = Integer.parseInt(firstLandmark[1]);
 
-                // Set the area info with detected landmarks
+                // Remember reported landmark and set area info
+                reportedLandmarks.add(currentlandmark_items);
                 api.setAreaInfo(areaId, currentlandmark_items, landmarkCount);
                 Log.i(TAG, String.format("Area %d: %s x %d", areaId, currentlandmark_items, landmarkCount));
             } else {
-                Log.w(TAG, "Area " + areaId + ": No landmark items detected");
-                // Set default if no detection
-                api.setAreaInfo(areaId, "unknown", 0);
+                Log.w(TAG, "Area " + areaId + ": No landmark items detected, using fallback");
+                String[] fallbackLandmark = getFallbackLandmark();
+                api.setAreaInfo(areaId, fallbackLandmark[0], Integer.parseInt(fallbackLandmark[1]));
+                Log.i(TAG, String.format("Area %d (FALLBACK): %s x %s", areaId, fallbackLandmark[0], fallbackLandmark[1]));
             }
 
             // Short delay between areas to ensure stability
@@ -234,11 +244,21 @@ public class YourService extends KiboRpcService {
             } else {
                 Log.w(TAG, "Target treasure '" + targetTreasureType + "' not found in any area");
                 api.notifyRecognitionItem();
+                int randomArea = getRandomAreaWithTreasure(areaTreasure);
+                Point targetAreaPoint = AREA_POINTS[randomArea - 1];
+                Quaternion targetAreaQuaternion = AREA_QUATERNIONS[randomArea - 1];
+                Log.i(TAG, "Moving to random Area " + randomArea + " for snapshot");
+                api.moveTo(targetAreaPoint, targetAreaQuaternion, false);
                 api.takeTargetItemSnapshot();
             }
         } else {
             Log.w(TAG, "Could not identify target treasure from astronaut");
             api.notifyRecognitionItem();
+            int randomArea = getRandomAreaWithTreasure(areaTreasure);
+            Point randomPoint = AREA_POINTS[randomArea - 1];
+            Quaternion randomQuat = AREA_QUATERNIONS[randomArea - 1];
+            Log.i(TAG, "Moving to random Area " + randomArea + " for snapshot");
+            api.moveTo(randomPoint, randomQuat, false);
             api.takeTargetItemSnapshot();
         }
 
@@ -377,10 +397,14 @@ public class YourService extends KiboRpcService {
             // Initialize YOLO detection service
             yoloService = new YOLODetectionService(this);
 
+            // Optional preprocessing for better accuracy
+            Mat frame = EnhanceUtils.enhance(image);
+
             // Call detection with all parameters (matches Python simple_detection_example)
             YOLODetectionService.EnhancedDetectionResult result = yoloService.DetectfromcvImage(
-                    image, imgtype, conf, standard_nms_threshold, overlap_nms_threshold
+                    frame, imgtype, conf, standard_nms_threshold, overlap_nms_threshold
             );
+            frame.release();
 
             // Get Python-like result with class names
             Map<String, Object> pythonResult = result.getPythonLikeResult();
@@ -925,6 +949,81 @@ public class YourService extends KiboRpcService {
                     debugPrefix, attempts, totalTime / 1000.0));
             return false;
         }
+    }
+
+    // Choose a landmark that hasn't been reported yet
+    private String[] getFallbackLandmark() {
+        List<String> unreported = new ArrayList<>();
+        for (String lm : ALL_POSSIBLE_LANDMARKS) {
+            if (!reportedLandmarks.contains(lm)) {
+                unreported.add(lm);
+            }
+        }
+
+        if (unreported.isEmpty()) {
+            unreported = Arrays.asList(ALL_POSSIBLE_LANDMARKS);
+        }
+
+        int idx = (int) (System.currentTimeMillis() % unreported.size());
+        String landmark = unreported.get(idx);
+        reportedLandmarks.add(landmark);
+        return new String[]{landmark, "1"};
+    }
+
+    // Pick a random area that contains treasures
+    private int getRandomAreaWithTreasure(Map<Integer, Set<String>> areaTreasure) {
+        List<Integer> areas = new ArrayList<>();
+        for (int i = 1; i <= 4; i++) {
+            if (areaTreasure.get(i) != null && !areaTreasure.get(i).isEmpty()) {
+                areas.add(i);
+            }
+        }
+
+        if (areas.isEmpty()) {
+            return (int) (System.currentTimeMillis() % 4) + 1;
+        } else {
+            int idx = (int) (System.currentTimeMillis() % areas.size());
+            return areas.get(idx);
+        }
+    }
+
+    /** Simple enhancement utility copied from previous implementation */
+    public static final class EnhanceUtils {
+        public static Mat enhance(Mat src) {
+            Mat blurred = new Mat();
+            Imgproc.GaussianBlur(src, blurred, new Size(5, 5), 0);
+
+            Mat enhanced = new Mat();
+            if (src.channels() == 1) {
+                Imgproc.equalizeHist(blurred, enhanced);
+            } else {
+                Mat hsv = new Mat();
+                Imgproc.cvtColor(blurred, hsv, Imgproc.COLOR_BGR2HSV);
+                List<Mat> channels = new ArrayList<>();
+                Core.split(hsv, channels);
+                Imgproc.equalizeHist(channels.get(2), channels.get(2));
+                Core.merge(channels, hsv);
+                Imgproc.cvtColor(hsv, enhanced, Imgproc.COLOR_HSV2BGR);
+                hsv.release();
+                for (Mat c : channels) {
+                    c.release();
+                }
+            }
+
+            Mat sharpened = new Mat();
+            Mat kernel = new Mat(3, 3, CvType.CV_32F);
+            float[] data = {0, -1, 0, -1, 5, -1, 0, -1, 0};
+            kernel.put(0, 0, data);
+            Imgproc.filter2D(enhanced, sharpened, -1, kernel);
+
+            blurred.release();
+            enhanced.release();
+            kernel.release();
+
+            return sharpened;
+        }
+
+        private EnhanceUtils() {}
     }
 
 

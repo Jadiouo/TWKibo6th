@@ -41,6 +41,13 @@ public class YOLODetectionService {
         initializeModel();
     }
 
+    /**
+     * Check if the ONNX model has been loaded successfully.
+     */
+    public boolean isModelReady() {
+        return isInitialized;
+    }
+
     private void initializeModel() {
         try {
             Log.i(TAG, "正在初始化YOLO模型...");

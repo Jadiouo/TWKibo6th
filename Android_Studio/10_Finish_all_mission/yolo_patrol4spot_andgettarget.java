@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.Random;
 
 // OpenCV imports
 import org.opencv.aruco.Dictionary;
@@ -1173,22 +1174,24 @@ public class YourService extends KiboRpcService {
         return new String[] {selectedLandmark, "1"};
     }
 
-    // 使用系统时间戳代替随机数选择随机区域
+    // 选择包含未发现宝藏的随机区域
     private int getRandomAreaWithTreasure(Map<Integer, Set<String>> areaTreasure) {
         List<Integer> areasWithTreasure = new ArrayList<>();
-        
+
         for (int areaId = 1; areaId <= 4; areaId++) {
             if (areaTreasure.get(areaId) != null && !areaTreasure.get(areaId).isEmpty()) {
                 areasWithTreasure.add(areaId);
             }
         }
-        
+
+        Random rand = new Random();
+
         if (areasWithTreasure.isEmpty()) {
-            // 使用时间戳模4+1作为随机数
-            return (int)(System.currentTimeMillis() % 4) + 1;
+            // Choose a random area between 1 and 4
+            return rand.nextInt(4) + 1;
         } else {
-            // 使用时间戳作为随机索引
-            int randomIndex = (int)(System.currentTimeMillis() % areasWithTreasure.size());
+            // Choose randomly from the areas that still have treasure
+            int randomIndex = rand.nextInt(areasWithTreasure.size());
             return areasWithTreasure.get(randomIndex);
         }
     }

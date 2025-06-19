@@ -57,6 +57,8 @@ public class YourService extends KiboRpcService {
     private final String[] ALL_POSSIBLE_LANDMARKS = { "red_bull", "chips", "battery", "pickel", "lemon", "candy",
             "wine", "coin" };
     private Map<Integer, Set<String>> areaLandmarkTypes = new HashMap<>();
+    // Reusable YOLO detection service
+    private YOLODetectionService yoloService;
 
     @Override
     protected void runPlan1() {
@@ -65,6 +67,9 @@ public class YourService extends KiboRpcService {
 
         // The mission starts.
         api.startMission();
+
+        // Initialize YOLO service once
+        yoloService = new YOLODetectionService(this);
 
         // Initialize area treasure tracking
         Map<Integer, Set<String>> areaTreasure = new HashMap<>();
@@ -373,6 +378,11 @@ public class YourService extends KiboRpcService {
 
         // Clean up target image
         targetImage.release();
+
+        // Close YOLO service at mission end
+        if (yoloService != null) {
+            yoloService.close();
+        }
     }
 
     private void processAreaWithDualTags(int areaId, Map<Integer, Set<String>> areaTreasure) {
@@ -618,12 +628,14 @@ public class YourService extends KiboRpcService {
      */
     private Object[] detectitemfromcvimg(Mat image, float conf, String imgtype,
             float standard_nms_threshold, float overlap_nms_threshold, int img_size) {
-        YOLODetectionService yoloService = null;
         try {
             Log.i(TAG, String.format("Starting YOLO detection - type: %s, conf: %.2f", imgtype, conf));
 
-            // Initialize YOLO detection service
-            yoloService = new YOLODetectionService(this);
+            // Reuse initialized YOLO service
+            if (yoloService == null) {
+                Log.w(TAG, "YOLO service not initialized");
+                yoloService = new YOLODetectionService(this);
+            }
 
             // Enhance frame before running YOLO
             Mat frame = EnhanceUtils.enhance(image);
@@ -664,11 +676,6 @@ public class YourService extends KiboRpcService {
             Log.e(TAG, "Error in detectitemfromcvimg: " + e.getMessage(), e);
             // Return empty results on error
             return new Object[] { new HashMap<String, Integer>(), new HashSet<String>() };
-        } finally {
-            // Clean up YOLO service
-            if (yoloService != null) {
-                yoloService.close();
-            }
         }
     }
 

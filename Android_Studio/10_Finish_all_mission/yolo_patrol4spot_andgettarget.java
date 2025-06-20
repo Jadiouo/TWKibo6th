@@ -156,15 +156,41 @@ public class YourService extends KiboRpcService {
             } catch (InterruptedException e) {
                 Log.w(TAG, "Sleep interrupted");
             }
-            
-            // 区域2特殊处理 - 同时处理区域2和区域3
-            if (areaId == 2) {
-                // 尝试同时处理区域2和区域3
-                processDualAreas(cropWarpSize, resizeSize, areaTreasure);
-                continue; // 跳过常规处理
-            }
-
             Mat image = api.getMatNavCam();
+            
+            // 区域2处理 - 先检查是否可以同时拍摄区域2和区域3
+            if (areaId == 2) {
+                Log.i(TAG, "到达区域2，检查是否可以同时处理区域2和区域3");
+                
+                // 获取预览图像，检查是否包含多个标记
+                Mat preCheckImage = image.clone();
+                
+                // 检测ArUco标记
+                Dictionary dictionary = Aruco.getPredefinedDictionary(Aruco.DICT_5X5_250);
+                List<Mat> corners = new ArrayList<>();
+                Mat ids = new Mat();
+                Aruco.detectMarkers(preCheckImage, dictionary, corners, ids);
+                
+                int markerCount = corners.size();
+                Log.i(TAG, "区域2预览图像中检测到 " + markerCount + " 个标记");
+                
+                // 清理资源
+                for (Mat corner : corners) {
+                    if (corner != null) corner.release();
+                }
+                ids.release();
+                
+                // 根据标记数量决定处理方式
+                if (markerCount >= 2) {
+                    Log.i(TAG, "检测到多个标记，尝试双区域处理");
+                    processDualAreas(cropWarpSize, resizeSize, areaTreasure);
+                    preCheckImage.release();
+                    continue; // 跳过常规处理
+                }
+                
+                // 如果只有一个或没有标记，使用正常流程处理
+                Log.i(TAG, "未检测到多个标记，使用正常流程仅处理区域2");
+            }
 
             // 使用现有的imageEnhanceAndCrop处理图像
             Mat claHeBinImage = imageEnhanceAndCrop(image, cropWarpSize, resizeSize, areaId);
